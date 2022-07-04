@@ -26,7 +26,7 @@ from utils.GradCAMpp import compute_gradcampp, visualize
 from utils.iouEvaluator import MouseAction, compute_bboxes_from_scoremaps, calculate_multiple_iou
 from config import config
 
-CAM_GUIDENCE = False # 是否人工干预训练过程
+CAM_GUIDENCE = True # 是否人工干预训练过程
 
 def train():
     # model

@@ -1480,3 +1480,11 @@ Epoch [134/3000], Iter [80/105], lr: 0.000010, Loss: 0.1387, top1: 97.5000
 Epoch [134/3000], Iter [90/105], lr: 0.000010, Loss: 0.2368, top1: 93.1250
 Epoch [134/3000], Iter [100/105], lr: 0.000010, Loss: 0.2105, top1: 93.7500
 Epoch [134/3000], Val_Loss: 0.1044, Val_top1: 97.4057, val_time: 3.8880 s
+------------------------------
+model:ResNet18
+num_classes:45
+num_epoch:100
+learning_rate:0.01
+im_width:256
+im_height:256
+iter_smooth:50
