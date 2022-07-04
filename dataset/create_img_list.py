@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/gfx/Projects/remote_sensing_image_classification')
+sys.path.append('/media/z840/HDD_1/LINUX/GradCAM_callback/Classification-GradCAM-callback')
 
 import os
 import random

@@ -24,7 +24,7 @@ class ResNet18(nn.Module):
         super(ResNet18, self).__init__()
         self.backbone = model
 
-        self.fc1 = nn.Linear(2048, 1024)
+        self.fc1 = nn.Linear(512, 1024)
         self.dropout = nn.Dropout(0.5)
         self.fc2 = nn.Linear(1024, num_classes)
 
@@ -57,7 +57,7 @@ class ResNet34(nn.Module):
         super(ResNet34, self).__init__()
         self.backbone = model
 
-        self.fc1 = nn.Linear(2048, 1024)
+        self.fc1 = nn.Linear(512, 1024)
         self.dropout = nn.Dropout(0.5)
         self.fc2 = nn.Linear(1024, num_classes)
 
@@ -125,7 +125,7 @@ class ResNet101(nn.Module):
         super(ResNet101, self).__init__()
         self.backbone = model
 
-        self.fc1 = nn.Linear(8192, 2048)
+        self.fc1 = nn.Linear(512, 2048)
         self.dropout = nn.Dropout(0.5)
         self.fc2 = nn.Linear(2048, num_classes)
 
@@ -158,7 +158,7 @@ class ResNet152(nn.Module):
         super(ResNet152, self).__init__()
         self.backbone = model
 
-        self.fc1 = nn.Linear(8192, 2048)
+        self.fc1 = nn.Linear(512, 2048)
         self.dropout = nn.Dropout(0.5)
         self.fc2 = nn.Linear(2048, num_classes)
 
@@ -189,7 +189,7 @@ class ResNet152(nn.Module):
 
 if __name__ == '__main__':
     backbone = models.resnet101(pretrained=True)
-    models = ResNet101(backbone, 21)
+    models = ResNet101(backbone, 45)
     data = torch.randn(1, 3, 256, 256)
     x = models(data)
     #print(x)

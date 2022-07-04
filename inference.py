@@ -1,6 +1,5 @@
 # -*- coding:utf-8 -*-
 import sys
-sys.path.append('/home/gfx/Projects/remote_sensing_image_classification')
 import os, argparse, time
 
 import numpy as np

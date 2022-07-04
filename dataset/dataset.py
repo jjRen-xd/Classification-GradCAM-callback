@@ -1,6 +1,5 @@
 # -*- coding:utf-8 -*-
 import sys
-sys.path.append('/home/gfx/Projects/remote_sensing_image_classification')
 import os
 import cv2
 import pandas as pd
@@ -35,7 +34,9 @@ class RSDataset(Dataset):
         im_path = self.ims[index]
         label = self.labels[index]
         im_path = os.path.join(config.data_root, im_path)
-        im = Image.open(im_path)
+        im = cv2.imread(im_path)
+        im = Image.fromarray(cv2.cvtColor(im, cv2.COLOR_BGR2RGB))
+
         #im = im.resize((self.width, self.height))
         if self.transform is not None:
             im = self.transform(im)

@@ -1,6 +1,5 @@
 # -*- coding:utf-8 -*-
 import sys
-sys.path.append('/home/gfx/Projects/remote_sensing_image_classification')
 import os, argparse, time
 
 import numpy as np
@@ -10,7 +9,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader 
 from torchvision import transforms, models
 from torch.nn.parallel.data_parallel import data_parallel
 import torchvision
@@ -21,9 +20,13 @@ from dataset.dataset import *
 from networks.network import *
 from networks.lr_schedule import *
 from metrics.metric import *
+
 from utils.plot import *
+from utils.GradCAMpp import compute_gradcampp, visualize
+from utils.iouEvaluator import MouseAction, compute_bboxes_from_scoremaps, calculate_multiple_iou
 from config import config
 
+CAM_GUIDENCE = False # 是否人工干预训练过程
 
 def train():
     # model
@@ -60,8 +63,8 @@ def train():
     criterion = nn.CrossEntropyLoss().cuda()
 
     # train data
-    transform = transforms.Compose([transforms.Scale(256),
-                                    transforms.RandomSizedCrop(224),
+    transform = transforms.Compose([transforms.Resize(256),
+                                    transforms.RandomResizedCrop(224),
                                     transforms.RandomHorizontalFlip(),
                                     transforms.ColorJitter(0.05, 0.05, 0.05),
                                     transforms.RandomRotation(10),
@@ -80,7 +83,7 @@ def train():
                                                          std=[0.229, 0.224, 0.225])])
     dst_valid = RSDataset('./data/valid.txt', width=config.width, 
                           height=config.height, transform=transform)
-    dataloader_valid = DataLoader(dst_valid, shuffle=False, batch_size=config.batch_size/2, num_workers=config.num_workers)
+    dataloader_valid = DataLoader(dst_valid, shuffle=False, batch_size=int(config.batch_size/2), num_workers=config.num_workers)
 
     # log
     if not os.path.exists('./log'):
@@ -121,12 +124,48 @@ def train():
             input = Variable(ims).cuda()
             target = Variable(label).cuda().long()
 
-            output = model(input)
-            
+            output = model(input)            
             loss = criterion(output, target)
+
+            if CAM_GUIDENCE:
+                ######################### BEGIN ########################
+                # 计算gradcampp, 并对结果进行反馈
+                gradcampps, _, _ = compute_gradcampp(input, target, model, 
+                                    target_layer=model.backbone.layer4[1].bn2, gt_known=True)
+                mouseAction = MouseAction()
+                loss_guide = 0
+                for j, (image, cam) in enumerate(zip(ims, gradcampps)):
+                    # 从cam计算bbox, CAM分割阈值0.6可调
+                    pre_bboxes, bbox_num = compute_bboxes_from_scoremaps(cam, [0.6], multi_contour_eval=True)
+                    # 人工选择感兴趣区域
+                    roi_bbox = mouseAction.label(visualize(image, cam, pre_bboxes[0]))
+                    if roi_bbox is None:
+                        roi_bbox = pre_bboxes[0][0]
+                    # 计算最大iou
+                    ious = calculate_multiple_iou(pre_bboxes[0], roi_bbox[np.newaxis, ...])
+                    iou = ious.max()
+                    # 计算loss
+                    loss_guide += 1-iou
+                    print(
+                        "Finish batch", i, "image", j, ":", 
+                        "roi_bbox:", roi_bbox[0], roi_bbox[1], roi_bbox[2], roi_bbox[3],
+                        "iou:", iou
+                    )
+                loss += loss_guide
+                print("loss_guide:", loss_guide, "loss:", loss)
+                ########################## END ##########################
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            if CAM_GUIDENCE:
+                ########################## BEGIN ##########################
+                print('One batch over, taking snapshot...')
+                if not os.path.exists('./checkpoints'):
+                    os.makedirs('./checkpoints')
+                torch.save(model, '{}/{}.pth'.format('checkpoints', config.model))
+                ########################## END ##########################
 
             top1 = accuracy(output.data, target.data, topk=(1,))
             train_loss_sum += loss.data.cpu().numpy()
@@ -145,14 +184,14 @@ def train():
                 train_loss_sum = 0
                 train_top1_sum = 0
 
-        train_draw_acc.append(top1_sum/len(dataloader_train))
+        train_draw_acc.append(t2n(top1_sum/len(dataloader_train)))
         
         epoch_time = (time.time() - ep_start) / 60.
         if epoch % 1 == 0 and epoch < config.num_epochs:
             # eval
             val_time_start = time.time()
             val_loss, val_top1 = eval(model, dataloader_valid, criterion)
-            val_draw_acc.append(val_top1)
+            val_draw_acc.append(t2n(val_top1))
             val_time = (time.time() - val_time_start) / 60.
 
             print('Epoch [%d/%d], Val_Loss: %.4f, Val_top1: %.4f, val_time: %.4f s'

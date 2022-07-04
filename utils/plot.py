@@ -14,6 +14,11 @@ font1 = {'family': 'Times New Roman',
          'size': 12,
          }
 
+
+def t2n(t):
+    return t.detach().cpu().numpy().astype(np.float)
+
+
 def smooth(scalar, weight=0.9):
     last = scalar[0]
     smoothed = []
@@ -22,6 +27,7 @@ def smooth(scalar, weight=0.9):
         smoothed.append(smoothed_val)
         last = smoothed_val
     return smoothed
+
 
 def draw_curve(y1, y2=None):
     x1 = [i for i in range(len(y1))]

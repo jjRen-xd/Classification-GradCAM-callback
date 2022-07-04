@@ -4,7 +4,7 @@
 # File Name:        PATH_ROOT/utils/signal_vis.py
 # Author:           JunJie Ren
 # Version:          v1.4
-# Created:          2022/06/15
+# Created:          2022/05/15
 # Description:      — — — — — — — — — — — — — — — — — — — — — — — — — — — 
                             --> DD信号识别（可解释）系列代码 <--        
                     -- 利用GradCAM++可视化技术，解释网络隐层特征
@@ -18,28 +18,22 @@
 # History:
        |  <author>  | <version> |   <time>   |          <desc>
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-   <0> | JunJie Ren |   v1.0    | 2020/06/15 |           creat
+   <0> | JunJie Ren |   v1.0    | 2022/05/15 |           creat
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-   <1> | JunJie Ren |   v1.1    | 2020/07/01 | 更新CAM计算逻辑，支持batch
+   <1> | JunJie Ren |   v1.1    | 2022/07/04 | 更新CAM计算逻辑，支持batch
                                              | 新增gt-known与top1计算选项
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-   <2> | JunJie Ren |   v1.2    | 2020/07/14 | 优化pred_scores计算方式
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-   <3> | JunJie Ren |   v1.3    | 2020/07/16 |   修复计算CAM的致命bug
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-   <4> | JunJie Ren |   v1.4    | 2020/07/24 | 新增SigCAM的计算, 失败
 --------------------------------------------------------------------------
 '''
 
 
 import os
-
+import sys
+from threading import main_thread
 import cv2
 import torch
 import numpy as np
 import torch.nn.functional as F
 
-from configs import cfgs
 
 def t2n(t):
     return t.detach().cpu().numpy().astype(np.float)
@@ -66,6 +60,47 @@ class SaveValues():
         self.backward_hook.remove()
 
 
+def reverse_normalize(x, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
+    x[0, :, :] = x[0, :, :] * std[0] + mean[0]
+    x[1, :, :] = x[1, :, :] * std[1] + mean[1]
+    x[2, :, :] = x[2, :, :] * std[2] + mean[2]
+    return x
+
+
+def visualize(image_tensor, cam, bounding_boxes):
+    """
+    Synthesize an image with CAM to make a result image.
+    Args:
+        img: (Tensor) shape => (3, H, W)(0~1)
+        cam: (array) shape => (H, W)(0~1)
+        bounding_box: (array) shape => (4,)[x1, y1, x2, y2]
+    Return:
+        synthesized image (array): shape =>(H, W, 3)
+    """
+    img = reverse_normalize(image_tensor.clone().detach().squeeze())
+
+    # 去除img冗余维度，通道转换，转numpy，维度调整
+    r, g, b = img.split(1)
+    img_array = torch.cat([b, g, r]).cpu().numpy().transpose(1, 2, 0)
+
+    # 去除cam冗余维度，生成热图，注意opencv默认bgr, heatmap: (224, 224, 3)
+    heatmap = cv2.applyColorMap(np.uint8(cam*255), cv2.COLORMAP_JET) / 255
+    result = heatmap + img_array
+    result = result / result.max()
+
+    if bounding_boxes is not None:
+        for bbox in bounding_boxes:
+            x1, y1, x2, y2 = bbox
+            cv2.rectangle(result, (x1, y1), (x2, y2), (255, 0, 255), 2)
+    return result
+
+
+def showImg(name, img):
+    img = img.squeeze()
+    cv2.imshow(name, img)
+    cv2.waitKey(0)
+    
+
 def normalize_scoremap(cam):
     """
     Args:
@@ -82,7 +117,7 @@ def normalize_scoremap(cam):
     cam /= cam.max()
     return cam
 
-def compute_gradcampp(images, labels, model, top1 = False, gt_known = True):
+def compute_gradcampp(images, labels, model, target_layer, top1 = False, gt_known = True):
     """
     Args:
         images: torch.Size([bz, 1, 128, 2]), 将要送入模型的一个batch数据
@@ -101,11 +136,6 @@ def compute_gradcampp(images, labels, model, top1 = False, gt_known = True):
 
     images = images.cuda()
     # 指定需要可视化的一层，并hook参数及倒数
-    if cfgs.model == "MsmcNet_RML2016":
-        target_layer = model.Block_4[3]
-    elif cfgs.model == "MsmcNet_ACARS":
-        target_layer = model.Block_7[3]
-    # print("target_layer:", target_layer)
     hook_values = SaveValues(target_layer)
 
     # 前向传播计算每个类别的score,并hook特征图,并计算真实预测的labels
@@ -122,53 +152,11 @@ def compute_gradcampp(images, labels, model, top1 = False, gt_known = True):
         exit()
     pred_labels = logits.argmax(dim = 1)
 
-    ''' 修复不能计算batch的问题 '''
-    # 1. 反向传播计算并hook梯度
+    # ''' 修复不能计算batch的问题 '''
+    # # 1. 反向传播计算并hook梯度
     model.zero_grad()                          
     pred_scores.backward(torch.ones_like(pred_scores), retain_graph=True)
-    activations = hook_values.activations           # ([bz, 15, 5, 1])
-    gradients = hook_values.gradients               # ([bz, 15, 5, 1])
-    bz, nc, _, _ = activations.shape                # (batch_size, num_channel, height, width)
-
-    # 2. 计算梯度图中每个梯度的权重alpha
-    numerator = gradients.pow(2)
-    denominator = 2 * gradients.pow(2)
-    ag = activations * gradients.pow(3)
-    denominator += ag.view(bz, nc, -1).sum(-1, keepdim=True).view(bz, nc, 1, 1)
-    denominator = torch.where(
-        denominator != 0.0, denominator, torch.ones_like(denominator)
-    )
-    alpha = numerator / (denominator + 1e-7)        # ([bz, 15, 5, 1])
-
-    # 3. 计算梯度图权重weights
-    Y = pred_scores.exp().unsqueeze(1).unsqueeze(2).unsqueeze(3)  # ([bz, 15, 5, 1])
-    Y_grad = F.relu(Y * gradients)
-    weights = (alpha * Y_grad).view(bz, nc, -1).sum(-1).view(bz, nc, 1, 1)   # ([bz, 1024, 1, 1])
-
-    # 4. 计算一组batch的CAMs
-    cams = (weights * activations).sum(1)            
-    cams = t2n(F.relu(cams))                        # ([bz, 5, 1])
-    # cams = t2n(cams)                              # ([bz, 5, 1])
-    CAMs = []
-    for idx, (cam, image) in enumerate(zip(cams, images)):
-        '''
-        # BUG 一些CAM不能计算的问题，1）CAM结果都为负，被ReLU抹除，2）都为0
-        if cam.max() == 0:
-        # if 1:
-            print("cam:", cam)
-            print("act:",activations.min(), activations.max())
-            print("grad:", gradients.min(), activations.max())
-            print("alphaJ:", alpha.min(), alpha.max())
-            print("weight:", weights.min(), weights.max())
-            print("numerator", numerator.min(), numerator.max())
-            print("denominator", denominator.min(), denominator.max())
-            print("weight*activate", (weights * activations).sum(1)[idx], cams[idx])
-            exit()
-        '''
-        cam = cv2.resize(cam, (w, h),               # 上采样，基于4x4像素邻域的3次插值法
-                                interpolation=cv2.INTER_CUBIC)
-        cam_normalized = normalize_scoremap(cam)    # (224, 224)
-        CAMs.append(cam_normalized)
+    CAMs = gradcampp(pred_scores, hook_values, (w, h))
 
     return CAMs, pred_scores, pred_labels
 
@@ -205,6 +193,3 @@ def gradcampp(scores, hook_values, cam_shape):
         CAMs.append(cam_normalized)
 
     return np.array(CAMs)
-
-if __name__ == "__main__":
-    pass
